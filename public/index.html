@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>QR Code dinâmico</title>
+<style>
+:root{--bg:#f3f5f1;--card:#fff;--ink:#14201b;--mute:#5b6a62;--line:#d5dcd6;--acc:#1f4fff;--accink:#fff;--bad:#b3261e;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f1713;--card:#18231d;--ink:#e8efe9;--mute:#9db0a4;--line:#2b3a31;--acc:#7b97ff;--accink:#0b1020;--bad:#ff8a80}}
+:root[data-theme="dark"]{--bg:#0f1713;--card:#18231d;--ink:#e8efe9;--mute:#9db0a4;--line:#2b3a31;--acc:#7b97ff;--accink:#0b1020;--bad:#ff8a80}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 "Bricolage Grotesque",system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:520px;margin:0 auto;padding:20px 16px 40px}
+h1{font-size:1.6rem;line-height:1.15;margin:8px 0 6px;font-weight:700;letter-spacing:-.01em}
+h2{font-size:1.05rem;margin:0 0 4px}
+p{margin:0 0 12px;color:var(--mute)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;margin-top:14px}
+.qr{display:flex;justify-content:center}
+.qr>div{background:#fff;padding:14px;border-radius:12px;border:1px solid var(--line)}
+.qr img,.qr canvas{display:block;max-width:100%}
+label{display:block;font-weight:600;font-size:.92rem;margin:12px 0 4px}
+input,select{width:100%;font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:11px 12px}
+input:focus-visible,select:focus-visible,button:focus-visible,a:focus-visible{outline:3px solid var(--acc);outline-offset:2px}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+button,.btn{font:inherit;font-weight:600;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--ink);padding:10px 14px;cursor:pointer;text-decoration:none;display:inline-block}
+.primary{background:var(--acc);color:var(--accink);border-color:var(--acc)}
+.msg{min-height:1.4em;font-size:.92rem;margin-top:10px}.err{color:var(--bad)}
+.cur{word-break:break-all;color:var(--ink);font-weight:600}
+.hist{list-style:none;margin:8px 0 0;padding:0;font-size:.9rem}
+.hist li{padding:8px 0;border-top:1px solid var(--line);word-break:break-all}
+.hist small{display:block;color:var(--mute)}
+.wrap{overflow-x:auto}
+.hub .btn{display:block;text-align:center;margin-top:10px;padding:14px;font-size:1.05rem}
+</style>
+</head>
+<body>
+<main><div id="app"></div></main>
+<script type="application/json" id="state">{"target":"","label":"","pageUrl":"","history":[]}</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script>
+(function(){
+var app=document.getElementById('app');
+var state={target:"",label:"",pageUrl:"",history:[],codes:[],statics:[],logo:''};
+try{state=Object.assign(state,JSON.parse(document.getElementById('state').textContent));}catch(e){}
+if(state.target&&!state.codes.length){state.codes=[{id:'principal',label:state.label||'Principal',target:state.target,t:Date.now()}];}
+state.target='';state.label='';
+function el(t,props,kids){var n=document.createElement(t);Object.keys(props||{}).forEach(function(k){if(k==='text')n.textContent=props[k];else if(k==='class')n.className=props[k];else if(k.slice(0,2)==='on')n[k]=props[k];else n.setAttribute(k,props[k]);});(kids||[]).forEach(function(c){n.appendChild(c);});return n;}
+function safeUrl(u){try{var x=new URL(u);return(x.protocol==='https:'||x.protocol==='http:')?x.href:null;}catch(e){return null;}}
+function withTimeout(p,ms){return Promise.race([p,new Promise(function(r){setTimeout(function(){r(null);},ms);})]);}
+function fmt(t){try{return new Date(t).toLocaleString('pt-BR');}catch(e){return '';}}
+function pageBase(){return state.pageUrl||(location.href.split('#')[0]);}
+
+var pw='',owner=false;try{pw=localStorage.getItem('qr-pw')||'';}catch(e){}
+function api(path){return fetch(path,{headers:{'x-admin-password':pw}});}
+var DL={save:function(o){return new Promise(function(res){var b=(o.data instanceof Blob)?o.data:new Blob([o.data]),u=URL.createObjectURL(b),a=document.createElement('a');a.href=u;a.download=o.filename;document.body.appendChild(a);a.click();a.remove();setTimeout(function(){URL.revokeObjectURL(u);},1500);res({status:'saved'});});}};
+var ART={publish:function(){return fetch('/api/all',{method:'PUT',headers:{'content-type':'application/json','x-admin-password':pw},body:JSON.stringify(state)}).then(function(r){if(!r.ok)throw {code:r.status};location.reload();});}};
+var claude={use:function(n){if(n==='downloads')return Promise.resolve(DL);if(n==='artifact')return Promise.resolve(owner?ART:null);return Promise.resolve(null);}};
+function loginView(){
+  var c=el('div',{class:'card'});c.appendChild(el('h2',{text:'Entrar como dono'}));
+  c.appendChild(el('p',{text:'Digite a senha de administrador para criar e editar QR Codes.'}));
+  var i=el('input',{type:'password',placeholder:'Senha'}),m=el('div',{class:'msg'});
+  var b=el('button',{class:'primary',text:'Entrar',onclick:function(){pw=i.value;fetch('/api/all',{headers:{'x-admin-password':pw}}).then(function(r){if(r.ok){try{localStorage.setItem('qr-pw',pw);}catch(e){}location.reload();}else{m.className='msg err';m.textContent=r.status===500?'A senha ainda não foi configurada no Netlify.':'Senha incorreta.';}}).catch(function(){m.className='msg err';m.textContent='Não foi possível conectar.';});}});
+  c.appendChild(i);c.appendChild(el('div',{class:'row'},[b]));c.appendChild(m);app.appendChild(c);
+}
+
+function makeQr(box,text,size,logo){box.innerHTML='';var q=new QRCode(box,{text:unescape(encodeURIComponent(text)),width:size,height:size,correctLevel:logo?QRCode.CorrectLevel.H:QRCode.CorrectLevel.M});
+  if(logo){var cv=box.querySelector('canvas'),im=box.querySelector('img'),g=new Image();g.onload=function(){var s=size*0.22,r=Math.min(s/g.width,s/g.height),w=g.width*r,h=g.height*r,x=(size-w)/2,y=(size-h)/2,pd=size*0.025,cx=cv.getContext('2d');cx.fillStyle='#fff';cx.fillRect(x-pd,y-pd,w+2*pd,h+2*pd);cx.drawImage(g,x,y,w,h);if(im)im.src=cv.toDataURL('image/png');};g.src=logo;}
+  return q;}
+function pub(art,msg){msg.className='msg';msg.textContent='Salvando…';art.publish(buildHtml()).then(function(){msg.textContent='Salvo.';}).catch(function(e){msg.className='msg err';msg.textContent='Não foi possível salvar ('+((e&&e.code)||'erro')+').';});}
+function logoCard(art){
+  var c=el('div',{class:'card'});c.appendChild(el('h2',{text:'Logo da empresa'}));
+  if(!art){c.appendChild(el('p',{text:'Só o dono da página pode definir o logo.'}));return c;}
+  c.appendChild(el('p',{text:'O logo aparece no centro dos QR Codes. Use uma imagem quadrada ou com fundo simples.'}));
+  if(state.logo){var pv=el('img',{src:state.logo,alt:'Logo atual'});pv.style.cssText='max-width:96px;max-height:96px;display:block;margin-bottom:8px';c.appendChild(pv);}
+  var msg=el('div',{class:'msg'}),fi=el('input',{type:'file',accept:'image/*'});
+  fi.onchange=function(){var f=fi.files&&fi.files[0];if(!f)return;var r=new FileReader();r.onload=function(){var g=new Image();g.onload=function(){var s=Math.min(1,200/Math.max(g.width,g.height)),cv=document.createElement('canvas');cv.width=Math.round(g.width*s);cv.height=Math.round(g.height*s);cv.getContext('2d').drawImage(g,0,0,cv.width,cv.height);state.logo=cv.toDataURL('image/png');pub(art,msg);};g.onerror=function(){msg.className='msg err';msg.textContent='Imagem inválida.';};g.src=r.result;};r.readAsDataURL(f);};
+  c.appendChild(fi);
+  if(state.logo)c.appendChild(el('div',{class:'row'},[el('button',{text:'Remover logo',onclick:function(){state.logo='';pub(art,msg);}})]));
+  c.appendChild(msg);return c;}
+var MF=[['site','Site','url','https://…'],['whatsapp','WhatsApp (com DDD)','tel','5511999999999'],['instagram','Instagram','text','@seuusuario'],['facebook','Facebook','text','suapagina'],['tiktok','TikTok','text','@seuusuario'],['youtube','YouTube','url','https://youtube.com/…'],['telefone','Telefone','tel',''],['email','E-mail','email',''],['endereco','Endereço','text','Rua, número, cidade']];
+function hrefFor(k,v){var s=v.replace(/^@/,''),http=s.toLowerCase().indexOf('http')===0,e=encodeURIComponent;
+  if(k==='site'||k==='youtube')return safeUrl(v);
+  if(k==='whatsapp'){var d=v.replace(/\D/g,'');return d?'https://wa.me/'+d:null;}
+  if(k==='telefone')return 'tel:'+v.replace(/[^\d+]/g,'');
+  if(k==='email')return 'mailto:'+v;
+  if(k==='endereco')return 'https://www.google.com/maps/search/?api=1&query='+e(v);
+  var base={instagram:'https://instagram.com/',facebook:'https://facebook.com/',tiktok:'https://www.tiktok.com/@'}[k];
+  return http?safeUrl(s):(base?base+e(s):null);}
+function hubView(c){app.appendChild(el('h1',{text:c.label||'Meus links'}));app.appendChild(el('p',{text:'Toque para abrir.'}));var box=el('div',{class:'hub'});MF.forEach(function(d){var v=(c.links||{})[d[0]];if(!v)return;var h=hrefFor(d[0],v);if(h)box.appendChild(el('a',{class:'btn',href:h,target:'_blank',rel:'noopener',text:d[1].replace(' (com DDD)','')}));});app.appendChild(box);}
+function visitView(target){
+  var t=safeUrl(target);
+  app.appendChild(el('h1',{text:'Redirecionando…'}));
+  app.appendChild(el('p',{text:'Abrindo o destino mais recente.'}));
+  app.appendChild(el('a',{class:'btn primary',href:t,text:'Abrir destino agora'}));
+  setTimeout(function(){try{(window.top||window).location.href=t;}catch(e){location.href=t;}},700);
+  app.appendChild(el('p',{class:'msg',text:'Se nada acontecer, toque no botão.'}));
+  app.appendChild(el('p',{},[el('a',{href:'#config',text:'Configurar este QR Code',onclick:function(){setTimeout(function(){location.reload();},0);}})]));
+}
+
+function configView(art){
+  var canEdit=!!art,sel=null,dl=null,pend=null;
+  var box=el('div');app.appendChild(box);
+  function qrUrl(c){return pageBase()+'#'+c.id;}
+  function thumb(c){var d=el('div',{class:'qr'});var i=el('div');d.appendChild(i);if(typeof QRCode!=='undefined'&&safeUrl(pageBase()))makeQr(i,qrUrl(c),150,state.logo);return d;}
+  function persist(msg,btn){msg.className='msg';msg.textContent='Salvando…';if(btn)btn.disabled=true;art.publish(buildHtml()).then(function(){msg.textContent='Salvo.';}).catch(function(e){if(btn)btn.disabled=false;msg.className='msg err';msg.textContent='Não foi possível salvar ('+((e&&e.code)||'erro')+'). Tente de novo.';});}
+  function render(){
+    box.innerHTML='';
+    box.appendChild(el('h1',{text:'QR Codes dinâmicos'}));
+    box.appendChild(el('p',{text:'Cada QR Code salvo tem um destino que você troca quando quiser, sem reimprimir.'}));
+    box.appendChild(el('div',{class:'row'},[el('a',{class:'btn primary',href:'#estatico',text:'Criar QR Code estático',onclick:function(){setTimeout(function(){location.reload();},0);}})]));
+    if(!state.codes.length)box.appendChild(el('div',{class:'card'},[el('h2',{text:'Nenhum QR Code salvo'}),el('p',{text:canEdit?'Preencha o formulário abaixo e salve o primeiro.':'Só o dono da página pode criar QR Codes.'})]));
+    state.codes.forEach(function(c){
+      var card=el('div',{class:'card'});
+      card.appendChild(thumb(c));
+      card.appendChild(el('h2',{text:c.label||c.id}));
+      card.appendChild(el('div',{class:'cur',text:c.kind==='multi'?'Vários links ('+Object.keys(c.links||{}).length+')':c.target}));
+      var row=el('div',{class:'row'});
+      row.appendChild(el('a',{class:'btn',href:c.kind==='multi'?qrUrl(c):(safeUrl(c.target)||'#'),target:'_blank',rel:'noopener',text:'Testar'}));
+      if(dl)row.appendChild(el('button',{text:'Baixar PNG',onclick:function(){var cv=card.querySelector('canvas');if(cv)cv.toBlob(function(b){dl.save({filename:'qr-'+c.id+'.png',data:b}).catch(function(){});});}}));
+      if(canEdit){
+        row.appendChild(el('button',{text:'Editar',onclick:function(){sel=c.id;pend=null;render();window.scrollTo(0,document.body.scrollHeight);}}));
+        var del=el('button',{text:pend===c.id?'Confirmar exclusão':'Excluir',onclick:function(){
+          if(pend!==c.id){pend=c.id;render();return;}
+          state.codes=state.codes.filter(function(x){return x.id!==c.id;});pend=null;persist(el('div'),del);}});
+        row.appendChild(del);
+      }
+      card.appendChild(row);box.appendChild(card);
+    });
+    var cur=state.codes.filter(function(x){return x.id===sel;})[0]||null;
+    var f=el('div',{class:'card'});
+    f.appendChild(el('h2',{text:cur?'Editar: '+(cur.label||cur.id):'Novo QR Code'}));
+    if(!canEdit)f.appendChild(el('p',{text:'Só quem criou esta página pode salvar ou alterar QR Codes. Entre na conta dona da página.'}));
+    else{
+      var iL=el('input',{type:'text',placeholder:'Ex.: Cardápio de verão',value:cur?cur.label:''});
+      var iT=el('input',{type:'url',inputmode:'url',placeholder:'https://…',value:cur?cur.target:''});
+      var iP=el('input',{type:'url',inputmode:'url',placeholder:'https://…',value:state.pageUrl||(location.origin+location.pathname)});
+      var msg=el('div',{class:'msg'});
+      f.appendChild(el('label',{text:'Nome do QR Code'}));f.appendChild(iL);
+      var kSel=el('select',{},[el('option',{value:'one',text:'Um link'}),el('option',{value:'multi',text:'Vários links (página com botões)'})]);
+      if(cur&&cur.kind==='multi')kSel.value='multi';
+      var one=el('div'),many=el('div'),mIn=[];
+      one.appendChild(el('label',{text:'Link de destino'}));one.appendChild(iT);
+      MF.forEach(function(d){many.appendChild(el('label',{text:d[1]}));var i=el('input',{type:d[2],placeholder:d[3],value:(cur&&cur.links&&cur.links[d[0]])||''});mIn.push(i);many.appendChild(i);});
+      function sw(){one.style.display=kSel.value==='multi'?'none':'block';many.style.display=kSel.value==='multi'?'block':'none';}
+      kSel.onchange=sw;sw();
+      f.appendChild(el('label',{text:'Tipo de QR Code'}));f.appendChild(kSel);f.appendChild(one);f.appendChild(many);
+      f.appendChild(el('label',{text:'Endereço público do site (vai dentro do QR Code)'}));f.appendChild(iP);
+      var save=el('button',{class:'primary',text:cur?'Salvar alterações':'Salvar QR Code',onclick:function(){
+        var multi=kSel.value==='multi',t=multi?'':safeUrl(iT.value.trim()),p=safeUrl(iP.value.trim()),links={};
+        if(multi){MF.forEach(function(d,i){var v=mIn[i].value.trim();if(v)links[d[0]]=v;});if(!Object.keys(links).length){msg.className='msg err';msg.textContent='Preencha pelo menos um campo.';return;}}
+        if(!multi&&!t){msg.className='msg err';msg.textContent='O destino precisa começar com https:// ou http://';return;}
+        if(!p){msg.className='msg err';msg.textContent='Informe o link público da página.';return;}
+        var lab=iL.value.trim();
+        if(cur){cur.label=lab;cur.target=t;cur.kind=multi?'multi':'';cur.links=links;}
+        else state.codes.push({id:'qr-'+Math.random().toString(36).slice(2,8),label:lab,target:t,kind:multi?'multi':'',links:links,t:Date.now()});
+        var id=cur?cur.id:state.codes[state.codes.length-1].id;
+        state.history.unshift({t:Date.now(),url:t||'Vários links',label:lab||id});state.history=state.history.slice(0,30);
+        state.pageUrl=p;persist(msg,save);}});
+      var row2=el('div',{class:'row'},[save]);
+      if(cur)row2.appendChild(el('button',{text:'Cancelar',onclick:function(){sel=null;render();}}));
+      f.appendChild(row2);f.appendChild(msg);
+    }
+    box.appendChild(f);
+    var h=el('div',{class:'card'});
+    h.appendChild(el('h2',{text:'Histórico de alterações'}));
+    if(!state.history.length)h.appendChild(el('p',{text:'As trocas de destino aparecem aqui.'}));
+    else{var ul=el('ul',{class:'hist'});state.history.forEach(function(x){var li=el('li',{text:x.url});li.appendChild(el('small',{text:fmt(x.t)+(x.label?' · '+x.label:'')}));ul.appendChild(li);});h.appendChild(el('div',{class:'wrap'},[ul]));
+      if(dl)h.appendChild(el('div',{class:'row'},[el('button',{text:'Baixar histórico (CSV)',onclick:function(){var q=function(s){return '"'+String(s||'').replace(/"/g,'""')+'"';};dl.save({filename:'historico-qr.csv',data:'\ufeff'+'Data;Nome;Destino\n'+state.history.map(function(x){return [q(fmt(x.t)),q(x.label),q(x.url)].join(';');}).join('\n')}).catch(function(){});}})]));}
+    box.appendChild(h);
+    box.appendChild(logoCard(art));
+  }
+  render();
+  claude.use('downloads').then(function(d){if(d){dl=d;render();}}).catch(function(){});
+}
+
+function staticView(art){
+  app.appendChild(el('h1',{text:'QR Code estático'}));
+  app.appendChild(el('p',{text:'O conteúdo fica gravado dentro do código e não pode ser alterado depois. Funciona para sempre, sem depender desta página.'}));
+  var T={link:{n:'Link de site',f:[['Link do site','url','https://…']]},instagram:{n:'Instagram',f:[['Usuário ou link do perfil','text','@seuusuario']]},facebook:{n:'Facebook',f:[['Usuário ou link da página','text','suapagina']]},tiktok:{n:'TikTok',f:[['Usuário ou link do perfil','text','@seuusuario']]},youtube:{n:'YouTube',f:[['Link do canal ou vídeo','url','https://youtube.com/…']]},linkedin:{n:'LinkedIn',f:[['Link do perfil ou página','url','https://linkedin.com/…']]},x:{n:'X (Twitter)',f:[['Usuário ou link do perfil','text','@seuusuario']]},telegram:{n:'Telegram',f:[['Usuário ou link','text','@seuusuario']]},maps:{n:'Localização / Maps',f:[['Endereço ou local','text','Rua, número, cidade']]},vcard:{n:'Contato (vCard)',f:[['Nome','text',''],['Telefone','tel',''],['E-mail (opcional)','email',''],['Empresa (opcional)','text','']]},cartao:{n:'Vários links (cartão de contato)',f:[['Nome','text',''],['Telefone','tel',''],['WhatsApp com DDD','tel','5511999999999'],['E-mail (opcional)','email',''],['Site','url','https://…'],['Instagram','text','@seuusuario'],['Facebook','text','suapagina'],['TikTok','text','@seuusuario'],['Endereço','text','Rua, número, cidade']]},texto:{n:'Texto',f:[['Texto','text','']]},whatsapp:{n:'WhatsApp',f:[['Número com país e DDD','tel','5511999999999'],['Mensagem automática (opcional)','text','']]},email:{n:'E-mail',f:[['E-mail','email',''],['Assunto (opcional)','text','']]},telefone:{n:'Telefone',f:[['Telefone','tel','']]},wifi:{n:'Wi-Fi',f:[['Nome da rede (SSID)','text',''],['Senha','text','']]}};
+  var card=el('div',{class:'card'});
+  var sel=el('select');Object.keys(T).forEach(function(k){sel.appendChild(el('option',{value:k,text:T[k].n}));});
+  card.appendChild(el('label',{text:'Tipo de conteúdo'}));card.appendChild(sel);
+  var fbox=el('div');card.appendChild(fbox);
+  var inputs=[],sec=null,last=null,saveBox=null,chk=null;
+  function useLogo(){return !!(art&&state.logo&&chk&&chk.checked);}
+  function fields(){fbox.innerHTML='';inputs=[];sec=null;var t=T[sel.value];t.f.forEach(function(d){fbox.appendChild(el('label',{text:d[0]}));var i=el('input',{type:d[1],placeholder:d[2]});if(d[1]==='tel'||d[1]==='url')i.setAttribute('inputmode',d[1]==='tel'?'tel':'url');inputs.push(i);fbox.appendChild(i);});if(sel.value==='wifi'){fbox.appendChild(el('label',{text:'Segurança'}));sec=el('select',{},[el('option',{value:'WPA',text:'WPA/WPA2'}),el('option',{value:'WEP',text:'WEP'}),el('option',{value:'nopass',text:'Sem senha'})]);fbox.appendChild(sec);}}
+  sel.onchange=function(){fields();};fields();
+  function build(){var v=inputs.map(function(i){return i.value.trim();}),k=sel.value;
+    if(!v[0])return null;
+    if(k==='link')return safeUrl(v[0]);
+    var H=function(base){var s=v[0].replace(/^@/,'');return s.toLowerCase().indexOf('http')===0?safeUrl(s):base+encodeURIComponent(s);};
+    if(k==='instagram')return H('https://instagram.com/');
+    if(k==='facebook')return H('https://facebook.com/');
+    if(k==='tiktok')return H('https://www.tiktok.com/@');
+    if(k==='x')return H('https://x.com/');
+    if(k==='telegram')return H('https://t.me/');
+    if(k==='youtube'||k==='linkedin')return safeUrl(v[0]);
+    if(k==='maps')return 'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(v[0]);
+    if(k==='vcard')return 'BEGIN:VCARD\nVERSION:3.0\nFN:'+v[0]+'\nTEL:'+(v[1]||'')+'\nEMAIL:'+(v[2]||'')+'\nORG:'+(v[3]||'')+'\nEND:VCARD';
+    if(k==='cartao'){var L=['BEGIN:VCARD','VERSION:3.0','FN:'+v[0]];if(v[1])L.push('TEL;TYPE=CELL:'+v[1].replace(/[^\d+]/g,''));if(v[3])L.push('EMAIL:'+v[3]);[['whatsapp',2],['site',4],['instagram',5],['facebook',6],['tiktok',7]].forEach(function(p){if(v[p[1]]){var h=hrefFor(p[0],v[p[1]]);if(h)L.push('URL:'+h);}});if(v[8])L.push('ADR:;;'+v[8]+';;;;');L.push('END:VCARD');return L.join('\n');}
+    if(k==='texto')return v[0];
+    if(k==='whatsapp'){var d=v[0].replace(/\D/g,'');return d?'https://wa.me/'+d+(v[1]?'?text='+encodeURIComponent(v[1]):''):null;}
+    if(k==='email')return 'mailto:'+v[0]+(v[1]?'?subject='+encodeURIComponent(v[1]):'');
+    if(k==='telefone')return 'tel:'+v[0].replace(/[^\d+]/g,'');
+    var e=function(s){return s.replace(/([\\;,:"])/g,'\\$1');};
+    return 'WIFI:T:'+sec.value+';S:'+e(v[0])+';'+(sec.value==='nopass'?'':'P:'+e(v[1])+';')+';';}
+  var msg=el('div',{class:'msg'}),qrBox=el('div'),qrCard=el('div',{class:'card qr'},[qrBox]),dlRow=el('div',{class:'row'});
+  qrCard.style.display='none';
+  var gen=el('button',{class:'primary',text:'Gerar QR Code',onclick:function(){
+    var c=build();msg.className='msg';
+    if(!c){msg.className='msg err';msg.textContent='Preencha o campo corretamente (links começam com https://).';qrCard.style.display='none';return;}
+    msg.textContent='';qrBox.innerHTML='';qrCard.style.display='flex';last={c:c,k:sel.value,l:useLogo()};if(saveBox&&art)saveBox.style.display='block';
+    try{makeQr(qrBox,c,240,useLogo()?state.logo:'');}catch(x){msg.className='msg err';msg.textContent='Conteúdo grande demais. Reduza o texto.';qrCard.style.display='none';}
+  }});
+  if(art&&state.logo){chk=el('input',{type:'checkbox',checked:'checked'});chk.style.width='auto';var cl=el('label',{},[chk,el('span',{text:' Usar logo da empresa'})]);cl.style.display='block';cl.style.marginTop='12px';card.appendChild(cl);}
+  card.appendChild(el('div',{class:'row'},[gen,el('button',{text:'Limpar',onclick:function(){fields();last=null;if(saveBox)saveBox.style.display='none';qrBox.innerHTML='';qrCard.style.display='none';msg.textContent='';}})]));
+  card.appendChild(msg);app.appendChild(card);app.appendChild(qrCard);
+  saveBox=el('div',{class:'card'});saveBox.style.display='none';
+  var sN=el('input',{type:'text',placeholder:'Ex.: Instagram da loja'}),sM=el('div',{class:'msg'});
+  var sB=el('button',{class:'primary',text:'Salvar QR Code',onclick:function(){if(!last||!art)return;state.statics.unshift({id:'st-'+Math.random().toString(36).slice(2,8),label:sN.value.trim(),type:T[last.k].n,content:last.c,logo:!!last.l,t:Date.now()});sM.className='msg';sM.textContent='Salvando…';sB.disabled=true;art.publish(buildHtml()).then(function(){sM.textContent='Salvo.';}).catch(function(e){sB.disabled=false;sM.className='msg err';sM.textContent='Não foi possível salvar ('+((e&&e.code)||'erro')+').';});}});
+  saveBox.appendChild(el('label',{text:'Nome para salvar'}));saveBox.appendChild(sN);saveBox.appendChild(el('div',{class:'row'},[sB]));saveBox.appendChild(sM);app.appendChild(saveBox);
+  var listBox=el('div'),pend=null,dl=null;app.appendChild(listBox);
+  function renderList(){listBox.innerHTML='';if(!art||!state.statics.length)return;listBox.appendChild(el('h2',{text:'QR Codes estáticos salvos'}));state.statics.forEach(function(s){var c=el('div',{class:'card'});var q=el('div',{class:'qr'}),qi=el('div');q.appendChild(qi);c.appendChild(q);try{makeQr(qi,s.content,150,s.logo?state.logo:'');}catch(x){}c.appendChild(el('h2',{text:s.label||s.type}));c.appendChild(el('p',{text:s.type}));c.appendChild(el('div',{class:'cur',text:s.content.length>120?s.content.slice(0,120)+'…':s.content}));var r=el('div',{class:'row'});if(dl)r.appendChild(el('button',{text:'Baixar PNG',onclick:function(){var cv=c.querySelector('canvas');if(cv)cv.toBlob(function(b){dl.save({filename:'qr-'+s.id+'.png',data:b}).catch(function(){});});}}));var del=el('button',{text:pend===s.id?'Confirmar exclusão':'Excluir',onclick:function(){if(pend!==s.id){pend=s.id;renderList();return;}state.statics=state.statics.filter(function(x){return x.id!==s.id;});art.publish(buildHtml()).catch(function(){});}});r.appendChild(del);c.appendChild(r);listBox.appendChild(c);});}
+  renderList();
+  claude.use('downloads').then(function(d){if(!d)return;dl=d;renderList();dlRow.appendChild(el('button',{text:'Baixar PNG',onclick:function(){var c=qrBox.querySelector('canvas');if(c)c.toBlob(function(b){d.save({filename:'qr-code-estatico.png',data:b}).catch(function(){});});}}));qrCard.parentNode.insertBefore(dlRow,qrCard.nextSibling);}).catch(function(){});
+  app.appendChild(logoCard(art));
+  app.appendChild(el('p',{},[el('a',{class:'btn',href:'#config',text:'Voltar ao QR Code dinâmico',onclick:function(){setTimeout(function(){location.reload();},0);}})]));
+}
+
+function buildHtml(){
+  var c=document.documentElement.cloneNode(true);
+  c.querySelector('#app').innerHTML='';
+  c.querySelector('#state').textContent=JSON.stringify(state).replace(/</g,'\\u003c');
+  return '<!doctype html>\n'+c.outerHTML;
+}
+
+function boot(){
+  var hs=location.hash.slice(1);
+  var start=pw?api('/api/all').then(function(r){if(r.ok)return r.json().then(function(d){state=Object.assign(state,d);owner=true;});if(r.status===401){pw='';try{localStorage.removeItem('qr-pw');}catch(e){}}}).catch(function(){}):Promise.resolve();
+  start.then(function(){
+    if(hs==='estatico'){if(!owner)loginView();staticView(owner?ART:null);return;}
+    if(hs!=='config'){
+      if(owner){var hit=state.codes.filter(function(c){return c.id===(hs||'principal');})[0];if(hit&&hit.kind==='multi'){hubView(hit);return;}if(hit&&safeUrl(hit.target)){visitView(hit.target);return;}configView(ART);return;}
+      return fetch('/api/public?id='+encodeURIComponent(hs||'principal')).then(function(r){return r.ok?r.json():null;}).then(function(c){if(c&&c.kind==='multi'){hubView(c);return;}if(c&&safeUrl(c.target)){visitView(c.target);return;}loginView();configView(null);}).catch(function(){loginView();configView(null);});
+    }
+    if(!owner)loginView();
+    configView(owner?ART:null);
+  });
+}
+boot();
+})();
+</script>
+</body>
+</html>
